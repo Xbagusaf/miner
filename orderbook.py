@@ -41,33 +41,32 @@ class OrderBook:
 
     def update(self, data: dict):
         """
-        4.3 INCREMENTAL UPDATE
-        Menerima data dari WebSocket combined stream (@depth20@100ms).
+        4.3 SNAPSHOT REPLACEMENT untuk @depth20@100ms.
+        Stream ini mengirim TOP-20 level terbaru secara penuh setiap 100ms,
+        bukan incremental. Level lama HARUS dihapus, bukan diakumulasi.
+        Akumulasi level lama menyebabkan crossed book (bid > ask → spread < 0).
         """
         current_u = int(data.get("u", 0))
-        
+
         # Abaikan jika event update ini lebih tua atau sama dengan update terakhir
         if current_u <= self.last_update_id:
             return
 
-        # Update Bids (WebSocket key untuk bids adalah "b")
+        # Hapus semua level lama — depth20 adalah full snapshot, bukan incremental
+        self.bids.clear()
+        self.asks.clear()
+
+        # Isi ulang dari snapshot terbaru
         for price_str, qty_str in data.get("b", []):
             price = float(price_str)
             qty = float(qty_str)
-            if qty == 0.0:
-                # qty == 0 → hapus price level
-                self.bids.pop(price, None)
-            else:
-                # qty > 0 → set/update
+            if qty > 0:
                 self.bids[price] = qty
 
-        # Update Asks (WebSocket key untuk asks adalah "a")
         for price_str, qty_str in data.get("a", []):
             price = float(price_str)
             qty = float(qty_str)
-            if qty == 0.0:
-                self.asks.pop(price, None)
-            else:
+            if qty > 0:
                 self.asks[price] = qty
 
         # Update referensi ID dan increment counter
