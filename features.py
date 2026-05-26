@@ -184,6 +184,12 @@ class FeatureEngine:
         
         best_bid, best_bid_qty = bids[0]
         best_ask, best_ask_qty = asks[0]
+
+        # Crossed book (ask < bid) terjadi saat re-sync atau market dislocation.
+        # Return None agar bar ini diabaikan dan tidak menghasilkan spread negatif.
+        if best_ask <= best_bid:
+            return None
+
         mid_price = (best_bid + best_ask) / 2.0
         
         taker_buy_vol = sum(q for t, q in zip(self.trade_buffer, sizes) if not t['m'])

@@ -108,7 +108,9 @@ class StorageEngine:
         if violation:
             self.logger.error(f"Kualitas Data Dilanggar pada {pair} ({violation}). Row diconvert ke NaN.")
             # Set price/volume fields ke NaN sesuai spesifikasi
-            for f in ["open", "high", "low", "close", "volume", "taker_buy_volume", "taker_sell_volume", "best_bid", "best_ask"]:
+            for f in ["open", "high", "low", "close", "volume", "taker_buy_volume", "taker_sell_volume",
+                      "best_bid", "best_ask", "spread", "mid_price", "microprice", "weighted_mid_price",
+                      "quoted_spread", "effective_spread"]:
                 row[f] = float('nan')
             row["has_gap"] = True
             
