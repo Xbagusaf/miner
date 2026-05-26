@@ -1,0 +1,36 @@
+# ===================================================================
+# INSTITUTIONAL-GRADE MARKET MICROSTRUCTURE DATA MINER CONFIGURATION
+# ===================================================================
+
+system:
+  environment: "production"
+  log_level: "INFO"
+
+# Daftar pair instrumen utama yang akan di-mining secara independen
+pairs:
+  - "HYPEUSDT"
+  - "SUIUSDT"
+  - "INJUSDT"
+  - "ZECUSDT"
+
+warmup:
+  # Batas bar awal (1 detik per bar) untuk melatih indikator EWMA / VPIN
+  bars: 120
+
+rolling_windows:
+  # Multiplier volume rata-rata untuk menentukan target VPIN bucket size
+  vpin_bucket_multiplier: 5.0
+  # Batas observasi untuk kalkulasi kyle's lambda per-trade
+  kyle_trade_depth: 30
+
+storage:
+  # Lokasi penyimpanan file output Parquet dan CSV
+  data_dir: "./data"
+  # Threshold rotasi penyimpanan harian (dalam hitungan GB)
+  rotation_threshold_gb: 4.5
+  hard_limit_gb: 5.0
+
+monitor:
+  # Mengaktifkan Rich TUI Dashboard pada console terminal
+  enabled: true
+
