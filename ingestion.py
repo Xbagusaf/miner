@@ -69,7 +69,7 @@ class IngestionEngine:
         self.logger = logging.getLogger(f"ingestion.{self.pair_upper}")
         
         # State Reconnect & Backoff
-        self.heartbeat_timeout = 10.0
+        self.heartbeat_timeout = 30.0
         self.skew_resync_ms = 2000
         self.downtime_start = 0.0
         self.backoff_sequence = [1, 2, 4, 8, 16, 32, 60]
@@ -203,7 +203,7 @@ class IngestionEngine:
                 
                 # Fungsi internal listener untuk di-spawn menjadi concurrent task
                 async def listen_stream(ws_url: str):
-                    async with websockets.connect(ws_url, ping_interval=180, ping_timeout=10) as ws:
+                    async with websockets.connect(ws_url, ping_interval=20, ping_timeout=10) as ws:
                         while not self.shutdown_event.is_set():
                             # Trigger reconnect via exception atau timeout (Heartbeat check)
                             message = await asyncio.wait_for(ws.recv(), timeout=self.heartbeat_timeout)
