@@ -33,14 +33,13 @@ class MonitorDashboard:
         """Kumpulkan semua metrik untuk satu pair (sekali panggil per refresh)."""
         engine = self.ingestion_engines.get(pair)
         state = self.recovery_manager.state.get(pair, {})
-        last_seq = state.get("last_seq", 0)
         last_ts = state.get("last_ts", 0)
         last_ts_str = (
             datetime.fromtimestamp(last_ts / 1000, tz=timezone.utc).strftime("%H:%M:%S")
             if last_ts > 0 else "-"
         )
 
-        total_rows = last_seq
+        total_rows = self.storage_engine.total_rows.get(pair, 0)
         skew_ms = self.shared_state[pair].get("clock_skew_ms", 0)
 
         rate_limiter = self.shared_state[pair].get("rate_limiter")

@@ -79,6 +79,7 @@ class StorageEngine:
         self.buffers: Dict[str, List[Dict[str, Any]]] = {pair: [] for pair in shared_state.keys()}
         self.last_flush: Dict[str, float] = {pair: time.time() for pair in shared_state.keys()}
         self.last_ts: Dict[str, int] = {pair: 0 for pair in shared_state.keys()}
+        self.total_rows: Dict[str, int] = {pair: 0 for pair in shared_state.keys()}
         self.current_date = datetime.now(timezone.utc).date()
         self.logger = logging.getLogger("storage")
         self.flush_lock = asyncio.Lock()
@@ -254,6 +255,7 @@ class StorageEngine:
                 if msg["type"] == "row":
                     row = self._validate_row(pair, msg["data"])
                     self.buffers[pair].append(row)
+                    self.total_rows[pair] += 1
                 elif msg["type"] == "update":
                     await self._handle_update_row(pair, msg)
                     
