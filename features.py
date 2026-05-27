@@ -356,10 +356,12 @@ class FeatureEngine:
         liquidity_vacuum = bool(spread > 3 * rolling_mean_spread)
 
         # ==== GRUP 6: ORDER FLOW TOXICITY ====
-        if not is_warmup and len(self.bar_buffer) >= self.warmup_bars:
-            vols_60 = [r["volume"] for r in list(self.bar_buffer)[-60:]]
-            avg_vol = calc_ema(vols_60, 60)
-            self.vpin_calculator.bucket_size = max(1.0, avg_vol * self.vpin_bucket_multiplier)
+        # Update bucket_size setiap bar (bukan hanya post-warmup) agar VPIN tidak
+        # stuck di 1.0 untuk pair dengan volume >> 1.0 selama warmup.
+        if self.bar_buffer:
+            n = min(20, len(self.bar_buffer))
+            avg_vol = sum(r["volume"] for r in list(self.bar_buffer)[-n:]) / n
+            self.vpin_calculator.bucket_size = max(avg_vol * self.vpin_bucket_multiplier, 1.0)
             
         self.vpin_calculator.update(taker_buy_vol, taker_sell_vol)
         vpin = self.vpin_calculator.vpin
