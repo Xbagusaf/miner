@@ -77,6 +77,7 @@ class FeatureEngine:
         self.last_date_utc = datetime.now(timezone.utc).date()
         self.seq_id = 0
         self.warmup_count = 0
+        self.trade_buffer_snapshot: list = []
         
         # State Forward-Filled Futures Data
         self.mark_price = 0.0
@@ -119,17 +120,18 @@ class FeatureEngine:
             self.current_sec = sec
             
         if sec > self.current_sec:
-            row = self.compute_bar(self.current_sec * 1000, local_time_ms, skew_ms)
+            # Update current_sec SEBELUM await pertama agar concurrent tick()
+            # dari stream lain tidak ikut compute bar yang sama (race condition).
+            bar_sec = self.current_sec
+            self.current_sec = sec
+            self.trade_buffer_snapshot = list(self.trade_buffer)
+            self.trade_buffer.clear()
+
+            row = self.compute_bar(bar_sec * 1000, local_time_ms, skew_ms)
             if row is not None:
                 self.bar_buffer.append(row)
                 await self.process_retroactive_realized_spread()
-                
-                # Kirim row lengkap ke storage
                 await self.queue.put({"type": "row", "data": row})
-                
-            # Reset state untuk bar baru
-            self.trade_buffer.clear()
-            self.current_sec = sec
 
     async def process_retroactive_realized_spread(self):
         """
@@ -179,8 +181,8 @@ class FeatureEngine:
         is_warmup = self.warmup_count <= self.warmup_bars
 
         # ==== GRUP 1: OHLCV ====
-        prices = [float(t['p']) for t in self.trade_buffer]
-        sizes = [float(t['q']) for t in self.trade_buffer]
+        prices = [float(t['p']) for t in self.trade_buffer_snapshot]
+        sizes = [float(t['q']) for t in self.trade_buffer_snapshot]
         
         best_bid, best_bid_qty = bids[0]
         best_ask, best_ask_qty = asks[0]
@@ -192,17 +194,17 @@ class FeatureEngine:
 
         mid_price = (best_bid + best_ask) / 2.0
         
-        taker_buy_vol = sum(q for t, q in zip(self.trade_buffer, sizes) if not t['m'])
-        taker_sell_vol = sum(q for t, q in zip(self.trade_buffer, sizes) if t['m'])
+        taker_buy_vol = sum(q for t, q in zip(self.trade_buffer_snapshot, sizes) if not t['m'])
+        taker_sell_vol = sum(q for t, q in zip(self.trade_buffer_snapshot, sizes) if t['m'])
         
         open_p = prices[0] if prices else mid_price
         high_p = max(prices) if prices else mid_price
         low_p = min(prices) if prices else mid_price
         close_p = prices[-1] if prices else mid_price
         volume = sum(sizes)
-        buy_trade_count = sum(1 for t in self.trade_buffer if not t['m'])
-        sell_trade_count = sum(1 for t in self.trade_buffer if t['m'])
-        trade_count = len(self.trade_buffer)
+        buy_trade_count = sum(1 for t in self.trade_buffer_snapshot if not t['m'])
+        sell_trade_count = sum(1 for t in self.trade_buffer_snapshot if t['m'])
+        trade_count = len(self.trade_buffer_snapshot)
 
         # ==== GRUP 2: ORDER BOOK FEATURES ====
         spread = best_ask - best_bid
@@ -252,9 +254,9 @@ class FeatureEngine:
         trade_burst_metric = trade_count / (self.trade_count_ewma + 1e-9)
         avg_trade_size = volume / (trade_count + 1e-9)
         max_trade_size = max(sizes) if sizes else 0.0
-        signed_trade_flow = sum((q if not t['m'] else -q) for t, q in zip(self.trade_buffer, sizes))
+        signed_trade_flow = sum((q if not t['m'] else -q) for t, q in zip(self.trade_buffer_snapshot, sizes))
         
-        timestamps_ms = sorted([float(t['T']) for t in self.trade_buffer])
+        timestamps_ms = sorted([float(t['T']) for t in self.trade_buffer_snapshot])
         if len(timestamps_ms) >= 2:
             inter_arrivals_s = np.diff(timestamps_ms) / 1000.0
             trade_arrival_rate = 1.0 / (np.mean(inter_arrivals_s) + 1e-9)

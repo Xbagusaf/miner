@@ -69,7 +69,7 @@ class IngestionEngine:
         self.logger = logging.getLogger(f"ingestion.{self.pair_upper}")
         
         # State Reconnect & Backoff
-        self.heartbeat_timeout = 30.0
+        self.heartbeat_timeout = 60.0
         self.skew_resync_ms = 2000
         self.downtime_start = 0.0
         self.backoff_sequence = [1, 2, 4, 8, 16, 32, 60]
