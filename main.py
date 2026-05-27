@@ -96,21 +96,24 @@ async def main():
     # Event untuk notifikasi graceful shutdown ke semua child-tasks
     shutdown_event = asyncio.Event()
 
-    # 4. Inisialisasi shared_state dict per pair beserta asyncio.Queue(maxsize=10000)
+    # 4. Inisialisasi shared_state dict per pair (tanpa queue — CSV append langsung)
     shared_state = {}
     for pair in pairs:
         shared_state[pair] = {
-            "queue": asyncio.Queue(maxsize=10000),
             "clock_skew_ms": clock_skew_ms,
             "config": config,
             "rate_limiter": None # Akan diinisialisasi oleh IngestionEngine terkait
         }
 
-    # 5. Inisialisasi StorageEngine
+    # 5. Inisialisasi StorageEngine (CSV-only, satu writer per pair)
     storage_engine = StorageEngine(shared_state, config)
-    
-    # 6. Inisialisasi RecoveryManager
-    recovery_manager = RecoveryManager(shared_state, config)
+
+    # 6. Inisialisasi RecoveryManager (terima shutdown_event & writers untuk CSV langsung)
+    recovery_manager = RecoveryManager(
+        shared_state, config,
+        shutdown_event=shutdown_event,
+        writers=storage_engine.writers,
+    )
 
     # Memasang Signal Handler untuk Graceful Shutdown (SIGINT, SIGTERM)
     loop = asyncio.get_running_loop()
@@ -131,14 +134,17 @@ async def main():
     tasks = []
     ingestion_engines = []
 
-    # 7. Buat asyncio.Task per pair (IngestionEngine.run)
+    # 7. Buat asyncio.Task per pair (IngestionEngine.run) dengan suntikan writer
     for pair in pairs:
-        engine = IngestionEngine(pair, shared_state[pair], recovery_manager, shutdown_event)
+        engine = IngestionEngine(
+            pair, shared_state[pair], recovery_manager, shutdown_event,
+            writer=storage_engine.writers[pair],
+        )
         ingestion_engines.append(engine)
         tasks.append(asyncio.create_task(engine.run(), name=f"ingestion_{pair}"))
 
-    # 8. Buat asyncio.Task untuk StorageEngine.writer_loop
-    tasks.append(asyncio.create_task(storage_engine.writer_loop(shutdown_event), name="storage_writer"))
+    # 8. Task tipis StorageEngine — hanya memantau shutdown & flush
+    tasks.append(asyncio.create_task(storage_engine.run(shutdown_event), name="storage_runner"))
 
     # 9. Buat asyncio.Task untuk MonitorDashboard.run (jika enabled)
     if config.get("monitor", {}).get("enabled", True):

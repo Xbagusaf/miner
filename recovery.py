@@ -15,15 +15,18 @@ class RecoveryManager:
     Manajemen Pemulihan Data (Recovery) jika terjadi WebSocket disconnect atau gap.
     Menggunakan 3 level fallback: aggTrades -> klines -> Interpolasi linear.
     """
-    def __init__(self, shared_state: Dict[str, Any], config: Dict[str, Any]):
+    def __init__(self, shared_state: Dict[str, Any], config: Dict[str, Any],
+                 shutdown_event: asyncio.Event = None, writers: Dict[str, Any] = None):
         self.shared_state = shared_state
         self.config = config
         self.state_file = "recovery.json"
         self.state: Dict[str, Dict[str, Any]] = {}
         self.logger = logging.getLogger("recovery")
-        
+        self._shutdown_event = shutdown_event or asyncio.Event()
+        self.writers = writers or {}
+
         self._load_state()
-        
+
         # Mulai background task untuk menyimpan state setiap 10 detik
         try:
             loop = asyncio.get_running_loop()
@@ -62,9 +65,12 @@ class RecoveryManager:
             f.write(data)
 
     async def _state_writer_loop(self):
-        """Update setiap 10 detik via WAL"""
-        while True:
-            await asyncio.sleep(10)
+        """Update setiap 10 detik via WAL. Berhenti saat shutdown_event di-set."""
+        while not self._shutdown_event.is_set():
+            try:
+                await asyncio.wait_for(self._shutdown_event.wait(), timeout=10.0)
+            except asyncio.TimeoutError:
+                pass
             await self.save_state()
 
     def update_state(self, pair: str, seq_id: int, ts: int):
@@ -147,7 +153,7 @@ class RecoveryManager:
             
         self.logger.info(f"Memicu Recovery Sequence untuk {pair}. Gap: {start_ms} - {end_ms} ({end_ms - start_ms}ms)")
         
-        queue = self.shared_state[pair]["queue"]
+        writer = self.writers.get(pair)
         rate_limiter = self.shared_state[pair].get("rate_limiter")
         
         recovered_rows = []
@@ -250,16 +256,17 @@ class RecoveryManager:
             # Validasi monotonicity
             if row["Timestamp"] <= last_known_ts:
                 continue
-                
+
             row = self._finalize_row(row)
-            await queue.put({"type": "row", "data": row})
+            if writer is not None:
+                writer.write_row(row)
             last_known_ts = row["Timestamp"]
             pushed_count += 1
-            
+
         # Update State Tracker
         if pushed_count > 0:
             self.state.setdefault(pair, {})
             self.state[pair]["last_ts"] = last_known_ts
             self.state[pair]["last_seq"] = seq_counter
-            self.logger.info(f"Recovery selesai. {pushed_count} bar hasil pemulihan di-push ke antrean.")
+            self.logger.info(f"Recovery selesai. {pushed_count} bar hasil pemulihan ditulis langsung ke CSV.")
 

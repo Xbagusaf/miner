@@ -30,7 +30,8 @@ class RateLimiter:
     def __init__(self, limit: int = 1100, window: int = 60):
         self.limit = limit
         self.window = window
-        self.requests = deque()
+        # maxlen sebagai safety net; acquire() sudah membersihkan entry > 60s
+        self.requests = deque(maxlen=4096)
         self._lock = asyncio.Lock()
 
     async def acquire(self, weight: int):
@@ -52,18 +53,20 @@ class RateLimiter:
                         await asyncio.sleep(wait_time)
 
 class IngestionEngine:
-    def __init__(self, pair: str, shared_state: Dict[str, Any], recovery_manager: Any, shutdown_event: asyncio.Event):
+    def __init__(self, pair: str, shared_state: Dict[str, Any], recovery_manager: Any,
+                 shutdown_event: asyncio.Event, writer: Any = None):
         self.pair_lower = pair.lower()
         self.pair_upper = pair.upper()
         self.shared_state = shared_state
         self.recovery_manager = recovery_manager
         self.shutdown_event = shutdown_event
-        
+        self.writer = writer
+
         self.rate_limiter = RateLimiter()
         self.shared_state["rate_limiter"] = self.rate_limiter
-        
+
         self.orderbook = OrderBook()
-        self.feature_engine = FeatureEngine(self.pair_upper, self.shared_state)
+        self.feature_engine = FeatureEngine(self.pair_upper, self.shared_state, writer=writer)
         
         self.session: Optional[aiohttp.ClientSession] = None
         self.logger = logging.getLogger(f"ingestion.{self.pair_upper}")
@@ -267,9 +270,15 @@ class IngestionEngine:
         
         # Tunggu semua task selesai (saat shutdown_event dipanggil)
         await asyncio.gather(*tasks, return_exceptions=True)
-        
+
+        # Tulis sisa pending bars (5 bar terakhir tanpa realized_spread) ke CSV
+        try:
+            self.feature_engine.flush_pending()
+        except Exception as e:
+            self.logger.error(f"Gagal flush pending bars: {e}")
+
         if self.session and not self.session.closed:
             await self.session.close()
-            
+
         self.logger.info(f"IngestionEngine untuk {self.pair_upper} telah berhenti.")
 
