@@ -69,7 +69,7 @@ class FeatureEngine:
         self.spread_history = deque(maxlen=60)
         self.returns_history = deque(maxlen=60)
         self.vpin_history = deque(maxlen=200)
-        self.vol_regime_history = deque(maxlen=86400) # Bisa disesuaikan memory-nya jika perlu, tp 86k = 1 hari
+        self.vol_regime_history = deque(maxlen=3600)  # 1 jam cukup untuk percentile regime
         
         self.trade_count_ewma = 0.0
         self.vpin_calculator = VPINCalculator(bucket_size=1.0)
@@ -353,7 +353,7 @@ class FeatureEngine:
         # ==== GRUP 8: MARKET REGIME FEATURES ====
         self.vol_regime_history.append(realized_volatility)
         if len(self.vol_regime_history) >= 60:
-            p33, p66 = np.percentile(self.vol_regime_history, [33, 66])
+            p33, p66 = np.percentile(np.fromiter(self.vol_regime_history, dtype=np.float32), [33, 66])
             volatility_regime = 0 if realized_volatility < p33 else 2 if realized_volatility > p66 else 1
         else:
             volatility_regime = 1
