@@ -221,5 +221,5 @@ class StorageEngine:
         while not shutdown_event.is_set():
             await asyncio.sleep(5)
         await self.flush_all()
-        self.close_all()
+        # close_all() dipanggil dari main.py setelah semua IngestionEngine selesai flush_pending()
         self.logger.info("Storage Engine telah berhenti.")

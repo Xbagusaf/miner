@@ -155,7 +155,9 @@ async def main():
     
     # 10. asyncio.gather semua tasks
     await asyncio.gather(*tasks, return_exceptions=True)
-    
+
+    # Tutup file handle CSV setelah SEMUA IngestionEngine selesai (termasuk flush_pending())
+    storage_engine.close_all()
     logger.info("Main event loop selesai.")
 
 if __name__ == "__main__":
