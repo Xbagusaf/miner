@@ -64,7 +64,7 @@ class FeatureEngine:
 
         # 5.1 STATE YANG DIBUTUHKAN
         self.bar_buffer = deque(maxlen=70)
-        self.trade_buffer: List[Dict[str, Any]] = []
+        self.trade_buffer: deque = deque(maxlen=10000)
         self.trade_level_buffer = deque(maxlen=30)
         self.spread_history = deque(maxlen=60)
         self.returns_history = deque(maxlen=60)
@@ -379,16 +379,24 @@ class FeatureEngine:
             
         ranging_regime = bool(volatility_regime == 0 and trend_regime == 1)
         
-        recent_sizes = []
-        for r in list(self.bar_buffer)[-60:]:
-            recent_sizes.extend([r["avg_trade_size"]] * r["trade_count"])
-        recent_sizes.extend(sizes)
-        
-        if len(recent_sizes) >= 5:
-            counts, _ = np.histogram(recent_sizes, bins=10)
-            probs = counts / (np.sum(counts) + 1e-9) + 1e-9
+        # Weighted histogram — avoids creating trade_count Python float copies per bar
+        _bar_list = list(self.bar_buffer)[-60:]
+        _bar_vals = np.array([r["avg_trade_size"] for r in _bar_list], dtype=np.float64)
+        _bar_wts  = np.array([max(r["trade_count"], 1) for r in _bar_list], dtype=np.float64)
+        if sizes:
+            _cur = np.array(sizes, dtype=np.float64)
+            _all_vals = np.concatenate([_bar_vals, _cur])
+            _all_wts  = np.concatenate([_bar_wts, np.ones(len(_cur), dtype=np.float64)])
+        else:
+            _all_vals = _bar_vals
+            _all_wts  = _bar_wts
+
+        if _all_vals.size >= 5 and np.sum(_all_wts) >= 5:
+            counts, _ = np.histogram(_all_vals, bins=10, weights=_all_wts)
+            total = np.sum(counts) + 1e-9
+            probs = counts / total + 1e-9
             probs /= np.sum(probs)
-            entropy = float(-np.sum([p * math.log(p) for p in probs if p > 0]))
+            entropy = float(-np.sum(probs * np.log(probs)))
         else:
             entropy = 0.0
             
