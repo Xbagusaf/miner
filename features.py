@@ -25,13 +25,18 @@ class VPINCalculator:
         self.acc_buy += buy_vol
         self.acc_sell += sell_vol
         self.acc_vol += buy_vol + sell_vol
-        
+
         while self.acc_vol >= self.bucket_size:
-            imbalance = abs(self.acc_buy - self.acc_sell)
+            # Ambil fraksi volume yang cukup mengisi tepat satu bucket.
+            # Ini memastikan imbalance/bucket_size selalu dalam [0, 1].
+            fraction = self.bucket_size / (self.acc_vol + 1e-9)
+            bucket_buy = self.acc_buy * fraction
+            bucket_sell = self.acc_sell * fraction
+            imbalance = abs(bucket_buy - bucket_sell)
             self.buckets.append(imbalance / (self.bucket_size + 1e-9))
-            self.acc_buy = 0.0
-            self.acc_sell = 0.0
-            self.acc_vol = 0.0
+            self.acc_buy -= bucket_buy
+            self.acc_sell -= bucket_sell
+            self.acc_vol -= self.bucket_size
 
     @property
     def vpin(self) -> float:
