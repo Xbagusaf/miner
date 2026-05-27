@@ -153,7 +153,7 @@ class RecoveryManager:
         recovered_rows = []
         seq_counter = self.state.get(pair, {}).get("last_seq", 0)
 
-        async with aiohttp.ClientSession() as session:
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=15)) as session:
             
             # --- LEVEL 1: REST /fapi/v1/aggTrades ---
             # Jika gap terlalu besar (> 1000 detik), bypass Level 1 untuk menghindari out-of-memory/rate limit parah

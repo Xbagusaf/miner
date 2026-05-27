@@ -203,7 +203,7 @@ class IngestionEngine:
                 
                 # Fungsi internal listener untuk di-spawn menjadi concurrent task
                 async def listen_stream(ws_url: str):
-                    async with websockets.connect(ws_url, ping_interval=20, ping_timeout=10) as ws:
+                    async with websockets.connect(ws_url, ping_interval=None, ping_timeout=None) as ws:
                         while not self.shutdown_event.is_set():
                             # Trigger reconnect via exception atau timeout (Heartbeat check)
                             message = await asyncio.wait_for(ws.recv(), timeout=self.heartbeat_timeout)
@@ -251,7 +251,8 @@ class IngestionEngine:
 
     async def run(self):
         """Entry point IngestionEngine yang dijalankan sebagai asyncio.Task di main.py"""
-        self.session = aiohttp.ClientSession()
+        _timeout = aiohttp.ClientTimeout(total=15)
+        self.session = aiohttp.ClientSession(timeout=_timeout)
         
         # Wajib dijalankan saat startup
         await self.fetch_orderbook_snapshot()
