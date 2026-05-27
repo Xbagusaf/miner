@@ -37,7 +37,7 @@ class VPINCalculator:
     def vpin(self) -> float:
         if not self.buckets:
             return 0.0
-        return float(np.mean(self.buckets))
+        return float(min(1.0, np.mean(self.buckets)))
 
 
 def calc_ema(series: List[float], span: int) -> float:
@@ -164,6 +164,10 @@ class FeatureEngine:
             rs = 2.0 * d_t * (target["close"] - mid_t5)
             target["realized_spread"] = float(rs)
             target["adverse_selection_metric"] = float(rs - target["effective_spread"])
+        else:
+            # Zero delta volume AND zero log return: no directional signal, no adverse selection
+            target["realized_spread"] = 0.0
+            target["adverse_selection_metric"] = 0.0
 
         if self.writer is not None:
             self.writer.write_row(target)
