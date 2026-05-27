@@ -2,7 +2,6 @@ import asyncio
 import time
 import os
 import glob
-from collections import deque
 from datetime import datetime, timezone
 from typing import Dict, Any, List
 
@@ -22,24 +21,6 @@ class MonitorDashboard:
         self.storage_engine = storage_engine
         self.recovery_manager = recovery_manager
         self.start_time = time.time()
-        self.seq_history: Dict[str, deque] = {
-            pair: deque(maxlen=60) for pair in self.shared_state.keys()
-        }
-
-    def _calculate_rows_per_min(self, pair: str, current_seq: int) -> int:
-        now = time.time()
-        history = self.seq_history[pair]
-        while history and now - history[0][0] > 60:
-            history.popleft()
-        history.append((now, current_seq))
-        if len(history) < 2:
-            return 0
-        time_diff = history[-1][0] - history[0][0]
-        seq_diff = history[-1][1] - history[0][1]
-        if time_diff <= 0:
-            return 0
-        return int((seq_diff / time_diff) * 60)
-
     def _get_disk_usage_gb(self, pair: str) -> float:
         data_dir = self.storage_engine.data_dir
         pattern = os.path.join(data_dir, f"{pair}*")
@@ -59,7 +40,7 @@ class MonitorDashboard:
             if last_ts > 0 else "-"
         )
 
-        rows_min = self._calculate_rows_per_min(pair, last_seq)
+        total_rows = last_seq
         skew_ms = self.shared_state[pair].get("clock_skew_ms", 0)
 
         rate_limiter = self.shared_state[pair].get("rate_limiter")
@@ -97,7 +78,7 @@ class MonitorDashboard:
 
         return {
             "pair": pair,
-            "rows_min": rows_min,
+            "total_rows": total_rows,
             "last_ts_str": last_ts_str,
             "skew_ms": skew_ms,
             "weight_used": weight_used,
@@ -115,8 +96,8 @@ class MonitorDashboard:
         t.add_column("KEY", style="dim", ratio=1)
         t.add_column("VALUE", ratio=1)
 
-        t.add_row("STATUS",    Text(m["status_str"], style=m["status_style"]))
-        t.add_row("ROWS/MIN",  Text(str(m["rows_min"]), style="bold white"))
+        t.add_row("STATUS",     Text(m["status_str"], style=m["status_style"]))
+        t.add_row("TOTAL ROWS", Text(str(m["total_rows"]), style="bold white"))
         t.add_row("LAST_TS",   m["last_ts_str"])
         t.add_row("SKEW_MS",   f'{m["skew_ms"]} ms')
         t.add_row("WEIGHT",    str(m["weight_used"]))
@@ -133,7 +114,7 @@ class MonitorDashboard:
 
     def _build_summary_card(self, all_metrics: list) -> Panel:
         n = len(all_metrics)
-        total_rows = sum(m["rows_min"] for m in all_metrics)
+        grand_total_rows = sum(m["total_rows"] for m in all_metrics)
         avg_skew = int(sum(abs(m["skew_ms"]) for m in all_metrics) / n) if n > 0 else 0
         total_buf = sum(m["buffer_mb"] for m in all_metrics)
         total_disk = sum(m["disk_gb"] for m in all_metrics)
@@ -142,8 +123,8 @@ class MonitorDashboard:
         t.add_column("KEY", style="dim", ratio=1)
         t.add_column("VALUE", ratio=1)
 
-        t.add_row("PAIRS",      str(n))
-        t.add_row("ROWS/MIN",   Text(str(total_rows), style="bold white"))
+        t.add_row("PAIRS",       str(n))
+        t.add_row("TOTAL ROWS",  Text(str(grand_total_rows), style="bold white"))
         t.add_row("AVG SKEW",   f"{avg_skew} ms")
         t.add_row("BUFFER",     f"{total_buf:.2f} MB")
         t.add_row("DISK",       f"{total_disk:.4f} GB")
