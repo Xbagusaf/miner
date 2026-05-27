@@ -2,6 +2,7 @@ import asyncio
 import time
 import os
 import glob
+import logging
 from datetime import datetime, timezone
 from typing import Dict, Any, List
 
@@ -21,6 +22,7 @@ class MonitorDashboard:
         self.storage_engine = storage_engine
         self.recovery_manager = recovery_manager
         self.start_time = time.time()
+        self.logger = logging.getLogger("monitor")
     def _get_disk_usage_gb(self, pair: str) -> float:
         data_dir = self.storage_engine.data_dir
         pattern = os.path.join(data_dir, f"{pair}*")
@@ -161,9 +163,9 @@ class MonitorDashboard:
     async def run(self, shutdown_event: asyncio.Event):
         """Task loop utama untuk me-render Dashboard."""
         try:
-            with Live(self._build_layout(), refresh_per_second=1, screen=True) as live:
+            with Live(self._build_layout(), refresh_per_second=1, screen=False) as live:
                 while not shutdown_event.is_set():
                     await asyncio.sleep(1)
                     live.update(self._build_layout())
-        except Exception:
-            pass
+        except Exception as e:
+            self.logger.error(f"Monitor Dashboard error: {e}", exc_info=True)
