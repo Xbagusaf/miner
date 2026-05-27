@@ -1,13 +1,9 @@
 uvloop
 websockets
 aiohttp
-pandas
 numpy>=2.0.0
-pyarrow
 orjson
 pyyaml
 rich
 scipy
 ntplib
-zstandard
-

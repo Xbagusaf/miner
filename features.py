@@ -52,11 +52,11 @@ def calc_ema(series: List[float], span: int) -> float:
 
 
 class FeatureEngine:
-    def __init__(self, pair: str, shared_state: Dict[str, Any]):
+    def __init__(self, pair: str, shared_state: Dict[str, Any], writer: Any = None):
         self.pair = pair
-        self.queue: asyncio.Queue = shared_state["queue"]
+        self.writer = writer  # CsvWriter — disuntik dari IngestionEngine
         self.config = shared_state["config"]
-        
+
         # Konfigurasi dari config.yaml (fallback defaults)
         self.warmup_bars = self.config.get("warmup", {}).get("bars", 60)
         self.trade_intensity_span = 60
@@ -70,7 +70,11 @@ class FeatureEngine:
         self.returns_history = deque(maxlen=60)
         self.vpin_history = deque(maxlen=200)
         self.vol_regime_history = deque(maxlen=3600)  # 1 jam cukup untuk percentile regime
-        
+
+        # Pending window untuk retroactive realized_spread:
+        # bar terlama keluar setelah bar t+5 tersedia (jadi 6 slot: indeks 0..5).
+        self.pending_window: deque = deque(maxlen=6)
+
         self.trade_count_ewma = 0.0
         self.vpin_calculator = VPINCalculator(bucket_size=1.0)
         self.cumulative_delta = 0.0
@@ -113,15 +117,15 @@ class FeatureEngine:
         setattr(self, key, val)
 
     async def tick(self, event_time_ms: int, local_time_ms: int, skew_ms: int):
-        """Metode utama pemicu pembentukan bar"""
+        """Pemicu pembentukan bar. Tidak ada await ke queue — langsung tulis ke CSV."""
         sec = event_time_ms // 1000
-        
+
         if self.current_sec == 0:
             self.current_sec = sec
-            
+
         if sec > self.current_sec:
-            # Update current_sec SEBELUM await pertama agar concurrent tick()
-            # dari stream lain tidak ikut compute bar yang sama (race condition).
+            # Update current_sec SEBELUM compute agar concurrent tick() dari
+            # stream lain (depth + aggTrade) tidak double-compute bar yang sama.
             bar_sec = self.current_sec
             self.current_sec = sec
             self.trade_buffer_snapshot = list(self.trade_buffer)
@@ -138,34 +142,40 @@ class FeatureEngine:
 
             if row is not None:
                 self.bar_buffer.append(row)
-                await self.process_retroactive_realized_spread()
-                await self.queue.put({"type": "row", "data": row})
+                self._enqueue_and_flush(row)
 
-    async def process_retroactive_realized_spread(self):
+    def _enqueue_and_flush(self, row: Dict[str, Any]):
         """
-        Hitung realized_spread retroaktif saat bar t+5 tersedia.
+        Masukkan row ke pending_window. Jika window penuh (6 bar), bar terlama
+        (indeks 0) sudah punya bar t+5 di indeks 5 → isi realized_spread &
+        adverse_selection_metric, lalu tulis ke CSV.
         """
-        if len(self.bar_buffer) > 5:
-            target = self.bar_buffer[-6]  # Bar t
-            future = self.bar_buffer[-1]  # Bar t+5
-            
-            mid_t5 = future["mid_price"]
-            d_t = np.sign(target["delta_volume"])
-            if d_t == 0:
-                d_t = np.sign(target["log_return"])
-                
-            if d_t != 0:
-                rs = 2 * d_t * (target["close"] - mid_t5)
-                target["realized_spread"] = float(rs)
-                target["adverse_selection_metric"] = float(rs - target["effective_spread"])
-                
-                # Kirim perintah update ke storage
-                await self.queue.put({
-                    "type": "update",
-                    "seq_id": target["sequence_id"],
-                    "realized_spread": target["realized_spread"],
-                    "adverse_selection_metric": target["adverse_selection_metric"]
-                })
+        self.pending_window.append(row)
+        if len(self.pending_window) < 6:
+            return
+
+        target = self.pending_window[0]
+        future = self.pending_window[5]
+        mid_t5 = future["mid_price"]
+        d_t = np.sign(target["delta_volume"])
+        if d_t == 0:
+            d_t = np.sign(target["log_return"])
+        if d_t != 0:
+            rs = 2.0 * d_t * (target["close"] - mid_t5)
+            target["realized_spread"] = float(rs)
+            target["adverse_selection_metric"] = float(rs - target["effective_spread"])
+
+        if self.writer is not None:
+            self.writer.write_row(target)
+        self.pending_window.popleft()
+
+    def flush_pending(self):
+        """Saat shutdown: tulis semua bar yang masih di pending_window apa adanya
+        (realized_spread akan tetap NaN untuk 5 bar terakhir karena belum ada t+5)."""
+        if self.writer is None:
+            return
+        while self.pending_window:
+            self.writer.write_row(self.pending_window.popleft())
 
     def compute_bar(self, ts_ms: int, local_time_ms: int, skew_ms: int) -> Optional[Dict[str, Any]]:
         if not self.current_ob:

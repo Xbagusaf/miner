@@ -1,7 +1,6 @@
 import asyncio
 import time
 import os
-import glob
 import logging
 from datetime import datetime, timezone
 from typing import Dict, Any, List
@@ -25,10 +24,14 @@ class MonitorDashboard:
         self.logger = logging.getLogger("monitor")
     def _get_disk_usage_gb(self, pair: str) -> float:
         data_dir = self.storage_engine.data_dir
-        pattern = os.path.join(data_dir, f"{pair}*")
-        total_bytes = sum(
-            os.path.getsize(f) for f in glob.glob(pattern) if os.path.isfile(f)
-        )
+        total_bytes = 0
+        try:
+            with os.scandir(data_dir) as it:
+                for entry in it:
+                    if entry.is_file() and entry.name.startswith(pair):
+                        total_bytes += entry.stat().st_size
+        except FileNotFoundError:
+            return 0.0
         return total_bytes / (1024 ** 3)
 
     def _collect_pair_metrics(self, pair: str) -> dict:
@@ -47,8 +50,9 @@ class MonitorDashboard:
         rate_limiter = self.shared_state[pair].get("rate_limiter")
         weight_used = sum(w for _, w in rate_limiter.requests) if rate_limiter else 0
 
-        buffer_len = len(self.storage_engine.buffers.get(pair, []))
-        buffer_mb = (buffer_len * 1024) / (1024 ** 2)
+        # CSV append langsung — tidak ada buffer signifikan di memori
+        buffer_len = 0
+        buffer_mb = 0.0
         disk_gb = self._get_disk_usage_gb(pair)
 
         uptime_sec = int(time.time() - self.start_time)
