@@ -168,7 +168,7 @@ class IngestionEngine:
                 await self.feature_engine.tick(event_time_ms, local_time_ms, clock_skew_ms)
 
         except Exception as e:
-            self.logger.error(f"Gagal memproses pesan WS: {e}")
+            self.logger.error(f"Gagal memproses pesan WS: {e}", exc_info=True)
 
     async def _ws_loop(self):
         """Main WebSocket loop dengan pemisahan rute /public dan /market (Sesuai Binance Update)"""

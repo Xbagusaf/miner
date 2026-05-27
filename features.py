@@ -6,7 +6,7 @@ from collections import deque
 from typing import Dict, Any, List, Optional
 
 import numpy as np
-from scipy.stats import linregress, percentileofscore
+from scipy.stats import linregress
 
 class VPINCalculator:
     """
@@ -127,7 +127,15 @@ class FeatureEngine:
             self.trade_buffer_snapshot = list(self.trade_buffer)
             self.trade_buffer.clear()
 
-            row = self.compute_bar(bar_sec * 1000, local_time_ms, skew_ms)
+            try:
+                row = self.compute_bar(bar_sec * 1000, local_time_ms, skew_ms)
+            except Exception as e:
+                import logging, traceback
+                logging.getLogger(f"features.{self.pair}").error(
+                    f"compute_bar error di bar {bar_sec}: {e}\n{traceback.format_exc()}"
+                )
+                row = None
+
             if row is not None:
                 self.bar_buffer.append(row)
                 await self.process_retroactive_realized_spread()
@@ -343,7 +351,11 @@ class FeatureEngine:
         vpin = self.vpin_calculator.vpin
         
         self.vpin_history.append(vpin)
-        toxicity_score = percentileofscore(self.vpin_history, vpin) / 100.0 if len(self.vpin_history) >= 10 else 0.0
+        if len(self.vpin_history) >= 10:
+            arr = np.fromiter(self.vpin_history, dtype=np.float32)
+            toxicity_score = float(np.searchsorted(np.sort(arr), vpin, side='right') / len(arr))
+        else:
+            toxicity_score = 0.0
 
         # ==== GRUP 7: FUTURES-SPECIFIC FEATURES ====
         self.prev_oi_60s.append(self.open_interest)
