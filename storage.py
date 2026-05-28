@@ -1,9 +1,7 @@
 import os
 import csv
-import time
 import asyncio
 import logging
-from datetime import datetime, timezone
 from typing import Dict, Any, List
 
 # Daftar kolom output (urutan = urutan kolom di CSV).
@@ -62,8 +60,8 @@ OUTPUT_COLUMNS: List[str] = [
 
 class CsvWriter:
     """
-    Penulis CSV append-only per pair.
-    - Buka satu file handle di awal hari, tulis baris demi baris.
+    Penulis CSV append-only per pair — satu file permanen, unlimited size.
+    - Nama file: {pair}.csv (tanpa tanggal), append setiap run.
     - Flush ke disk setiap `flush_every` baris agar tidak hilang saat crash.
     - Validasi kualitas data inline (spread<0, harga<=0, dll) → set field ke NaN.
     """
@@ -82,26 +80,20 @@ class CsvWriter:
         self.flush_every = flush_every
         self.logger = logging.getLogger(f"storage.{pair}")
 
-        self._date_str = self._today_str()
         self._fh = None
         self._writer = None
-        self._open_file(self._date_str)
+        self._open_file()
 
         self.last_ts: int = 0
         self.total_rows: int = 0
         self._unflushed: int = 0
 
-    @staticmethod
-    def _today_str() -> str:
-        return datetime.now(timezone.utc).strftime("%Y%m%d")
+    def _filename(self) -> str:
+        return os.path.join(self.data_dir, f"{self.pair}.csv")
 
-    def _filename(self, date_str: str) -> str:
-        return os.path.join(self.data_dir, f"{self.pair}_{date_str}.csv")
-
-    def _open_file(self, date_str: str):
-        fname = self._filename(date_str)
+    def _open_file(self):
+        fname = self._filename()
         is_new = not os.path.exists(fname) or os.path.getsize(fname) == 0
-        # line-buffered tidak dipakai — flush manual lebih hemat untuk burst write
         self._fh = open(fname, "a", newline="", encoding="utf-8")
         self._writer = csv.DictWriter(
             self._fh,
@@ -111,7 +103,6 @@ class CsvWriter:
         if is_new:
             self._writer.writeheader()
             self._fh.flush()
-        self._date_str = date_str
 
     def _validate(self, row: Dict[str, Any]) -> Dict[str, Any]:
         """Validator kualitas data inline. Tidak memodifikasi dict asli."""
@@ -141,13 +132,6 @@ class CsvWriter:
 
     def write_row(self, row: Dict[str, Any]):
         """Tulis satu baris ke CSV. Aman dipanggil dari async context (sync I/O cepat)."""
-        # Rotasi harian otomatis: jika tanggal UTC berganti, buka file baru.
-        today = self._today_str()
-        if today != self._date_str:
-            self.logger.info(f"Daily rollover: {self._date_str} → {today}")
-            self.close()
-            self._open_file(today)
-
         row = self._validate(row)
         try:
             self._writer.writerow(row)
@@ -179,10 +163,9 @@ class CsvWriter:
 class StorageEngine:
     """
     Container tipis untuk semua CsvWriter. Tugasnya hanya:
-    - Inisialisasi writer per pair
+    - Inisialisasi writer per pair (satu file permanen: {pair}.csv)
     - Menyediakan akses lewat `writers[pair]`
     - Mengeksekusi flush_all() saat shutdown
-    - Memantau daily rollover (tapi writer juga melakukannya sendiri)
     """
 
     def __init__(self, shared_state: Dict[str, Any], config: Dict[str, Any]):
@@ -216,7 +199,7 @@ class StorageEngine:
             w.close()
 
     async def run(self, shutdown_event: asyncio.Event):
-        """Loop ringan: cek shutdown setiap 5 detik. Daily rollover ditangani writer sendiri."""
+        """Loop ringan: cek shutdown setiap 5 detik."""
         self.logger.info("Storage Engine (CSV-only) siap.")
         while not shutdown_event.is_set():
             await asyncio.sleep(5)
